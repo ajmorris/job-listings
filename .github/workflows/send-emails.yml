@@ -1,0 +1,21 @@
+name: Send Daily Emails
+
+on:
+  schedule:
+    # Run at 9 AM UTC (after the 8 AM scrape completes)
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  send-emails:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Send Daily Job Digest Emails
+        run: |
+          curl -X POST "${{ secrets.APP_URL }}/api/cron/email" \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json"
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
