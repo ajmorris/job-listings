@@ -158,12 +158,12 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ message: 'No job titles to search for' })
         }
 
-        // Check which titles have been scraped recently (within last 4 hours)
-        const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
+        // Check which titles have been scraped recently (within last 24 hours)
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
         const { data: recentScrapes } = await supabase
             .from('scrape_logs')
             .select('search_title, source')
-            .gte('started_at', fourHoursAgo)
+            .gte('started_at', twentyFourHoursAgo)
             .is('error', null)
 
         // Create a set of recently scraped title+source combinations
