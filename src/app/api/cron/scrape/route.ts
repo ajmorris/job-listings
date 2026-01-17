@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// LinkedIn Jobs Scraper Actor ID on Apify (no login required)
-const LINKEDIN_ACTOR_ID = 'apimaestro~linkedin-jobs-scraper-api'
+// LinkedIn Jobs Scraper Actor ID on Apify (uses titleSearch for precise filtering)
+const LINKEDIN_ACTOR_ID = 'fantastic-jobs~advanced-linkedin-job-search-api'
 const INDEED_ACTOR_ID = 'misceres~indeed-scraper'
 
 interface ApifyRunResponse {
@@ -13,14 +13,15 @@ interface ApifyRunResponse {
 }
 
 interface LinkedInJob {
-    job_title: string
-    company: string
+    title: string
+    organization?: string
+    organizationName?: string
     location: string
-    job_url: string
+    url: string
     description: string
-    salary?: string | null
-    posted_at?: string
-    job_id: string
+    salaryRange?: string | null
+    datePosted?: string
+    id: string
 }
 
 interface IndeedJob {
@@ -126,14 +127,15 @@ export async function POST(request: NextRequest) {
         for (const title of uniqueTitles) {
             try {
                 const linkedInJobs = await runApifyActor(LINKEDIN_ACTOR_ID, {
-                    keyword: title,
-                    rows: 25,
-                    location: 'United States',
+                    titleSearch: [title],  // Use titleSearch for precise title filtering
+                    locationSearch: ['United States'],
+                    maxJobs: 25,
+                    descriptionType: 'text',
                 }) as LinkedInJob[]
 
                 for (const job of linkedInJobs) {
-                    // Filter: only save jobs where title matches search keyword
-                    const jobTitleLower = (job.job_title || '').toLowerCase()
+                    // The titleSearch already filters by title, but double-check
+                    const jobTitleLower = (job.title || '').toLowerCase()
                     const searchTitleLower = title.toLowerCase()
                     if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
                         continue // Skip jobs that don't match the search title
@@ -141,14 +143,14 @@ export async function POST(request: NextRequest) {
 
                     const { error } = await supabase.from('jobs').upsert(
                         {
-                            external_id: `linkedin_${job.job_id || job.job_url}`,
+                            external_id: `linkedin_${job.id || job.url}`,
                             source: 'linkedin',
-                            title: job.job_title,
-                            company: job.company,
+                            title: job.title,
+                            company: job.organizationName || job.organization,
                             location: job.location,
                             description: job.description?.substring(0, 5000),
-                            url: job.job_url,
-                            salary: job.salary,
+                            url: job.url,
+                            salary: job.salaryRange,
                             search_title: title,
                         },
                         { onConflict: 'external_id' }
