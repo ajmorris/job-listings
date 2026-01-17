@@ -44,11 +44,26 @@ create table if not exists public.email_logs (
   unique(user_id, job_id)
 );
 
+-- Track scraper run history for debugging and auditing
+create table if not exists public.scrape_logs (
+  id uuid default gen_random_uuid() primary key,
+  source text not null check (source in ('linkedin', 'indeed')),
+  search_title text not null,
+  jobs_found integer default 0,
+  jobs_saved integer default 0,
+  raw_response jsonb,
+  error text,
+  started_at timestamp with time zone default now(),
+  completed_at timestamp with time zone
+);
+
 -- Indexes for performance
 create index if not exists idx_job_titles_user_id on public.job_titles(user_id);
 create index if not exists idx_jobs_search_title on public.jobs(search_title);
 create index if not exists idx_jobs_scraped_at on public.jobs(scraped_at);
 create index if not exists idx_email_logs_user_job on public.email_logs(user_id, job_id);
+create index if not exists idx_scrape_logs_search_title on public.scrape_logs(search_title);
+create index if not exists idx_scrape_logs_started_at on public.scrape_logs(started_at);
 
 -- Enable Row Level Security
 alter table public.profiles enable row level security;

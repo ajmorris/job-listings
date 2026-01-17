@@ -90,6 +90,49 @@ async function runApifyActor(actorId: string, input: object): Promise<object[]> 
     return data
 }
 
+async function logScrapeStart(supabase: any, source: string, title: string) {
+    const { data, error } = await supabase
+        .from('scrape_logs')
+        .insert({
+            source,
+            search_title: title,
+            started_at: new Date().toISOString()
+        })
+        .select('id')
+        .single()
+
+    if (error) console.error('Error logging scrape start:', error)
+    return data?.id
+}
+
+async function logScrapeComplete(supabase: any, logId: string, found: number, saved: number, rawResponse: any) {
+    if (!logId) return
+    const { error } = await supabase
+        .from('scrape_logs')
+        .update({
+            jobs_found: found,
+            jobs_saved: saved,
+            raw_response: rawResponse,
+            completed_at: new Date().toISOString()
+        })
+        .eq('id', logId)
+
+    if (error) console.error('Error logging scrape completion:', error)
+}
+
+async function logScrapeError(supabase: any, logId: string, errorMsg: string) {
+    if (!logId) return
+    const { error } = await supabase
+        .from('scrape_logs')
+        .update({
+            error: errorMsg,
+            completed_at: new Date().toISOString()
+        })
+        .eq('id', logId)
+
+    if (error) console.error('Error logging scrape error:', error)
+}
+
 export async function POST(request: NextRequest) {
     // Verify cron secret
     const authHeader = request.headers.get('authorization')
@@ -109,100 +152,129 @@ export async function POST(request: NextRequest) {
 
         if (titlesError) throw titlesError
 
-        const uniqueTitles = [...new Set(allTitles?.map(t => t.title) || [])]
+        const uniqueTitles = [...new Set(allTitles?.map(t => t.title.toLowerCase().trim()) || [])]
 
         if (uniqueTitles.length === 0) {
             return NextResponse.json({ message: 'No job titles to search for' })
         }
 
-        console.log(`Scraping jobs for ${uniqueTitles.length} unique titles...`)
+        // Check which titles have been scraped recently (within last 4 hours)
+        const fourHoursAgo = new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString()
+        const { data: recentScrapes } = await supabase
+            .from('scrape_logs')
+            .select('search_title, source')
+            .gte('started_at', fourHoursAgo)
+            .is('error', null)
+
+        // Create a set of recently scraped title+source combinations
+        const recentlyScraped = new Set(
+            recentScrapes?.map(s => `${s.source}:${s.search_title.toLowerCase()}`) || []
+        )
+
+        console.log(`Found ${uniqueTitles.length} unique titles, ${recentlyScraped.size} already scraped recently`)
 
         const results = {
             linkedin: 0,
             indeed: 0,
+            skipped: 0,
             errors: [] as string[],
         }
 
-        // Scrape LinkedIn for each title
+        // Scrape each title
         for (const title of uniqueTitles) {
-            try {
-                const linkedInJobs = await runApifyActor(LINKEDIN_ACTOR_ID, {
-                    titleSearch: [title],  // Use titleSearch for precise title filtering
-                    locationSearch: ['United States'],
-                    maxJobs: 25,
-                    descriptionType: 'text',
-                }) as LinkedInJob[]
+            // Scrape LinkedIn (if not recently scraped)
+            if (!recentlyScraped.has(`linkedin:${title}`)) {
+                const logId = await logScrapeStart(supabase, 'linkedin', title)
+                try {
+                    const linkedInJobs = await runApifyActor(LINKEDIN_ACTOR_ID, {
+                        titleSearch: [title],
+                        locationSearch: ['United States'],
+                        maxJobs: 25,
+                        descriptionType: 'text',
+                    }) as LinkedInJob[]
 
-                for (const job of linkedInJobs) {
-                    // The titleSearch already filters by title, but double-check
-                    const jobTitleLower = (job.title || '').toLowerCase()
-                    const searchTitleLower = title.toLowerCase()
-                    if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
-                        continue // Skip jobs that don't match the search title
+                    let savedCount = 0
+                    for (const job of linkedInJobs) {
+                        const jobTitleLower = (job.title || '').toLowerCase()
+                        const searchTitleLower = title.toLowerCase()
+                        if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                            continue
+                        }
+
+                        const { error } = await supabase.from('jobs').upsert(
+                            {
+                                external_id: `linkedin_${job.id || job.url}`,
+                                source: 'linkedin',
+                                title: job.title,
+                                company: job.organizationName || job.organization,
+                                location: job.location,
+                                description: job.description?.substring(0, 5000),
+                                url: job.url,
+                                salary: job.salaryRange,
+                                search_title: title,
+                            },
+                            { onConflict: 'external_id' }
+                        )
+                        if (!error) savedCount++
                     }
-
-                    const { error } = await supabase.from('jobs').upsert(
-                        {
-                            external_id: `linkedin_${job.id || job.url}`,
-                            source: 'linkedin',
-                            title: job.title,
-                            company: job.organizationName || job.organization,
-                            location: job.location,
-                            description: job.description?.substring(0, 5000),
-                            url: job.url,
-                            salary: job.salaryRange,
-                            search_title: title,
-                        },
-                        { onConflict: 'external_id' }
-                    )
-
-                    if (!error) results.linkedin++
+                    results.linkedin += savedCount
+                    await logScrapeComplete(supabase, logId, linkedInJobs.length, savedCount, linkedInJobs)
+                } catch (err) {
+                    results.errors.push(`LinkedIn (${title}): ${err}`)
+                    await logScrapeError(supabase, logId, String(err))
                 }
-            } catch (err) {
-                results.errors.push(`LinkedIn (${title}): ${err}`)
+            } else {
+                results.skipped++
             }
 
-            // Scrape Indeed for each title
-            try {
-                const indeedJobs = await runApifyActor(INDEED_ACTOR_ID, {
-                    position: title,
-                    country: 'US',
-                    maxItems: 25,
-                }) as IndeedJob[]
+            // Scrape Indeed (if not recently scraped)
+            if (!recentlyScraped.has(`indeed:${title}`)) {
+                const logId = await logScrapeStart(supabase, 'indeed', title)
+                try {
+                    const indeedJobs = await runApifyActor(INDEED_ACTOR_ID, {
+                        position: title,
+                        country: 'US',
+                        maxItems: 25,
+                    }) as IndeedJob[]
 
-                for (const job of indeedJobs) {
-                    // Filter: only save jobs where title matches search keyword
-                    const jobTitleLower = (job.positionName || '').toLowerCase()
-                    const searchTitleLower = title.toLowerCase()
-                    if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
-                        continue // Skip jobs that don't match the search title
+                    let savedCount = 0
+                    for (const job of indeedJobs) {
+                        const jobTitleLower = (job.positionName || '').toLowerCase()
+                        const searchTitleLower = title.toLowerCase()
+                        if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                            continue
+                        }
+
+                        const { error } = await supabase.from('jobs').upsert(
+                            {
+                                external_id: `indeed_${job.id}`,
+                                source: 'indeed',
+                                title: job.positionName,
+                                company: job.company,
+                                location: job.location,
+                                description: job.description?.substring(0, 5000),
+                                url: job.url,
+                                salary: job.salary,
+                                search_title: title,
+                            },
+                            { onConflict: 'external_id' }
+                        )
+                        if (!error) savedCount++
                     }
-
-                    const { error } = await supabase.from('jobs').upsert(
-                        {
-                            external_id: `indeed_${job.id}`,
-                            source: 'indeed',
-                            title: job.positionName,
-                            company: job.company,
-                            location: job.location,
-                            description: job.description?.substring(0, 5000),
-                            url: job.url,
-                            salary: job.salary,
-                            search_title: title,
-                        },
-                        { onConflict: 'external_id' }
-                    )
-
-                    if (!error) results.indeed++
+                    results.indeed += savedCount
+                    await logScrapeComplete(supabase, logId, indeedJobs.length, savedCount, indeedJobs)
+                } catch (err) {
+                    results.errors.push(`Indeed (${title}): ${err}`)
+                    await logScrapeError(supabase, logId, String(err))
                 }
-            } catch (err) {
-                results.errors.push(`Indeed (${title}): ${err}`)
+            } else {
+                results.skipped++
             }
         }
 
         return NextResponse.json({
             success: true,
-            message: `Scraped ${results.linkedin} LinkedIn jobs and ${results.indeed} Indeed jobs`,
+            message: `Scraped ${results.linkedin} LinkedIn jobs and ${results.indeed} Indeed jobs (${results.skipped} sources skipped - recently scraped)`,
             errors: results.errors,
         })
     } catch (error) {
