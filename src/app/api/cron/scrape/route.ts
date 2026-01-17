@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
-// LinkedIn Jobs Scraper Actor ID on Apify
-const LINKEDIN_ACTOR_ID = 'bebity~linkedin-jobs-scraper'
+// LinkedIn Jobs Scraper Actor ID on Apify (no login required)
+const LINKEDIN_ACTOR_ID = 'apimaestro~linkedin-jobs-scraper-api'
 const INDEED_ACTOR_ID = 'misceres~indeed-scraper'
 
 interface ApifyRunResponse {
@@ -14,13 +14,13 @@ interface ApifyRunResponse {
 
 interface LinkedInJob {
     title: string
-    company: string
+    companyName: string
     location: string
-    jobUrl: string
+    url: string
     description: string
     salary?: string
-    postedTime?: string
-    jobId: string
+    postedAt?: string
+    id: string
 }
 
 interface IndeedJob {
@@ -124,21 +124,21 @@ export async function POST(request: NextRequest) {
         for (const title of uniqueTitles) {
             try {
                 const linkedInJobs = await runApifyActor(LINKEDIN_ACTOR_ID, {
-                    searchQueries: [title],
-                    limit: 25,
+                    keyword: title,
+                    rows: 25,
                     location: 'United States',
                 }) as LinkedInJob[]
 
                 for (const job of linkedInJobs) {
                     const { error } = await supabase.from('jobs').upsert(
                         {
-                            external_id: `linkedin_${job.jobId}`,
+                            external_id: `linkedin_${job.id || job.url}`,
                             source: 'linkedin',
                             title: job.title,
-                            company: job.company,
+                            company: job.companyName,
                             location: job.location,
                             description: job.description?.substring(0, 5000),
-                            url: job.jobUrl,
+                            url: job.url,
                             salary: job.salary,
                             search_title: title,
                         },
