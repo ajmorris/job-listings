@@ -13,24 +13,24 @@ interface ApifyRunResponse {
 }
 
 interface LinkedInJob {
-    title: string
-    companyName: string
+    job_title: string
+    company: string
     location: string
-    url: string
+    job_url: string
     description: string
-    salary?: string
-    postedAt?: string
-    id: string
+    salary?: string | null
+    posted_at?: string
+    job_id: string
 }
 
 interface IndeedJob {
-    title: string
+    positionName: string
     company: string
     location: string
     url: string
     description: string
-    salary?: string
-    date?: string
+    salary?: string | null
+    postedAt?: string
     id: string
 }
 
@@ -84,7 +84,9 @@ async function runApifyActor(actorId: string, input: object): Promise<object[]> 
         `https://api.apify.com/v2/actor-runs/${runId}/dataset/items?token=${token}`
     )
 
-    return datasetResponse.json()
+    const data = await datasetResponse.json()
+    console.log('Apify response:', JSON.stringify(data).substring(0, 1000))
+    return data
 }
 
 export async function POST(request: NextRequest) {
@@ -130,15 +132,22 @@ export async function POST(request: NextRequest) {
                 }) as LinkedInJob[]
 
                 for (const job of linkedInJobs) {
+                    // Filter: only save jobs where title matches search keyword
+                    const jobTitleLower = (job.job_title || '').toLowerCase()
+                    const searchTitleLower = title.toLowerCase()
+                    if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                        continue // Skip jobs that don't match the search title
+                    }
+
                     const { error } = await supabase.from('jobs').upsert(
                         {
-                            external_id: `linkedin_${job.id || job.url}`,
+                            external_id: `linkedin_${job.job_id || job.job_url}`,
                             source: 'linkedin',
-                            title: job.title,
-                            company: job.companyName,
+                            title: job.job_title,
+                            company: job.company,
                             location: job.location,
                             description: job.description?.substring(0, 5000),
-                            url: job.url,
+                            url: job.job_url,
                             salary: job.salary,
                             search_title: title,
                         },
@@ -160,11 +169,18 @@ export async function POST(request: NextRequest) {
                 }) as IndeedJob[]
 
                 for (const job of indeedJobs) {
+                    // Filter: only save jobs where title matches search keyword
+                    const jobTitleLower = (job.positionName || '').toLowerCase()
+                    const searchTitleLower = title.toLowerCase()
+                    if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                        continue // Skip jobs that don't match the search title
+                    }
+
                     const { error } = await supabase.from('jobs').upsert(
                         {
                             external_id: `indeed_${job.id}`,
                             source: 'indeed',
-                            title: job.title,
+                            title: job.positionName,
                             company: job.company,
                             location: job.location,
                             description: job.description?.substring(0, 5000),

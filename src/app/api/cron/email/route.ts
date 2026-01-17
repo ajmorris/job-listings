@@ -177,18 +177,26 @@ export async function POST(request: NextRequest) {
         const userTitles = titles.map(t => t.title)
 
         // Find jobs matching user's titles that haven't been sent yet
-        const { data: jobs } = await supabase
+        // First get all jobs matching titles
+        const { data: allJobs } = await supabase
           .from('jobs')
-          .select('id, title, company, location, url, salary, source')
+          .select('id, title, company, location, url, salary, source, search_title')
           .in('search_title', userTitles)
-          .not('id', 'in',
-            supabase
-              .from('email_logs')
-              .select('job_id')
-              .eq('user_id', user.id)
-          )
           .order('scraped_at', { ascending: false })
-          .limit(20)
+          .limit(50)
+
+        console.log(`Found ${allJobs?.length || 0} jobs for user ${user.email}`)
+
+        // Get already sent job IDs for this user
+        const { data: sentLogs } = await supabase
+          .from('email_logs')
+          .select('job_id')
+          .eq('user_id', user.id)
+
+        const sentJobIds = new Set(sentLogs?.map(l => l.job_id) || [])
+
+        // Filter to only unsent jobs
+        const jobs = (allJobs || []).filter(job => !sentJobIds.has(job.id)).slice(0, 20)
 
         // Send appropriate email
         if (!jobs || jobs.length === 0) {
