@@ -70,37 +70,52 @@ alter table public.profiles enable row level security;
 alter table public.job_titles enable row level security;
 alter table public.jobs enable row level security;
 alter table public.email_logs enable row level security;
+alter table public.scrape_logs enable row level security;
 
 -- Profiles RLS policies
+drop policy if exists "Users can view own profile" on public.profiles;
 create policy "Users can view own profile" on public.profiles
   for select using (auth.uid() = id);
 
+drop policy if exists "Users can update own profile" on public.profiles;
 create policy "Users can update own profile" on public.profiles
   for update using (auth.uid() = id);
 
 -- Job titles RLS policies
+drop policy if exists "Users can view own job titles" on public.job_titles;
 create policy "Users can view own job titles" on public.job_titles
   for select using (auth.uid() = user_id);
 
+drop policy if exists "Users can insert own job titles" on public.job_titles;
 create policy "Users can insert own job titles" on public.job_titles
   for insert with check (auth.uid() = user_id);
 
+drop policy if exists "Users can delete own job titles" on public.job_titles;
 create policy "Users can delete own job titles" on public.job_titles
   for delete using (auth.uid() = user_id);
 
 -- Jobs are public (for cron access)
+drop policy if exists "Jobs are viewable by everyone" on public.jobs;
 create policy "Jobs are viewable by everyone" on public.jobs
   for select using (true);
 
+drop policy if exists "Service role can insert jobs" on public.jobs;
 create policy "Service role can insert jobs" on public.jobs
   for insert with check (true);
 
 -- Email logs RLS policies
+drop policy if exists "Users can view own email logs" on public.email_logs;
 create policy "Users can view own email logs" on public.email_logs
   for select using (auth.uid() = user_id);
 
+drop policy if exists "Service role can insert email logs" on public.email_logs;
 create policy "Service role can insert email logs" on public.email_logs
   for insert with check (true);
+
+-- Scrape logs RLS policies
+drop policy if exists "Service role can manage scrape logs" on public.scrape_logs;
+create policy "Service role can manage scrape logs" on public.scrape_logs
+  for all using (true);
 
 -- Function to automatically create profile on signup
 create or replace function public.handle_new_user()
