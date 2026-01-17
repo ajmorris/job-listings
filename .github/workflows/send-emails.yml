@@ -2,8 +2,8 @@ name: Send Daily Emails
 
 on:
   schedule:
-    # Run at 9 AM UTC (after the 8 AM scrape completes)
-    - cron: '0 9 * * *'
+    # Run at 8 AM EST (1 PM UTC), after the 7 AM EST scrape completes
+    - cron: '0 13 * * *'
   workflow_dispatch: # Allow manual triggering
 
 jobs:
