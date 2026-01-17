@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { createAdminClient } from '@/lib/supabase/admin'
 
 // LinkedIn Jobs Scraper Actor ID on Apify
-const LINKEDIN_ACTOR_ID = 'bebity/linkedin-jobs-scraper'
-const INDEED_ACTOR_ID = 'misceres/indeed-scraper'
+const LINKEDIN_ACTOR_ID = 'bebity~linkedin-jobs-scraper'
+const INDEED_ACTOR_ID = 'misceres~indeed-scraper'
 
 interface ApifyRunResponse {
     data: {
