@@ -202,7 +202,7 @@ export async function POST(request: NextRequest) {
         if (!jobs || jobs.length === 0) {
           // Send "no new jobs" email
           await resend.emails.send({
-            from: 'JobFlow <onboarding@resend.dev>',
+            from: 'JobFlow <no-reply@jobs.ajmorris.me>',
             to: user.email,
             subject: '📭 No new jobs today - JobFlow',
             html: generateNoJobsEmailHtml(user.email, user.unsubscribe_token, appUrl),
@@ -211,7 +211,7 @@ export async function POST(request: NextRequest) {
         } else {
           // Send jobs email
           await resend.emails.send({
-            from: 'JobFlow <onboarding@resend.dev>',
+            from: 'JobFlow <no-reply@jobs.ajmorris.me>',
             to: user.email,
             subject: `🎯 ${jobs.length} new job${jobs.length === 1 ? '' : 's'} for you - JobFlow`,
             html: generateEmailHtml({
