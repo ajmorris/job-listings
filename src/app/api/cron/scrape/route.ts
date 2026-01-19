@@ -37,13 +37,33 @@ interface IndeedJob {
 }
 
 interface MonsterJob {
-    jobTitle: string
-    companyName: string
-    location: string
-    jobUrl: string
-    description: string
-    salary?: string | null
-    jobId: string
+    jobPosting: {
+        title: string
+        hiringOrganization: {
+            name: string
+        }
+        jobLocation: Array<{
+            address: {
+                addressLocality: string
+                addressRegion: string
+            }
+        }>
+        description: string
+        baseSalary?: {
+            currency: string
+            value: {
+                minValue: number
+                maxValue: number
+                unitText: string
+            }
+        } | null
+        identifier: {
+            value: string
+        }
+    }
+    apply: {
+        applyUrl: string
+    }
 }
 
 async function runApifyActor(actorId: string, input: object): Promise<object[]> {
@@ -298,22 +318,47 @@ export async function POST(request: NextRequest) {
 
                     let savedCount = 0
                     for (const job of monsterJobs) {
-                        const jobTitleLower = (job.jobTitle || '').toLowerCase()
+                        const jp = job.jobPosting
+                        if (!jp) continue
+
+                        const jobTitleLower = (jp.title || '').toLowerCase()
                         const searchTitleLower = title.toLowerCase()
                         if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
                             continue
                         }
 
+                        // Extract location
+                        let locStr = ""
+                        if (jp.jobLocation && jp.jobLocation.length > 0) {
+                            const addr = jp.jobLocation[0].address
+                            if (addr.addressLocality && addr.addressRegion) {
+                                locStr = `${addr.addressLocality}, ${addr.addressRegion}`
+                            } else {
+                                locStr = addr.addressLocality || addr.addressRegion || ""
+                            }
+                        }
+
+                        // Extract salary
+                        let salaryStr = null
+                        if (jp.baseSalary) {
+                            const { currency, value } = jp.baseSalary
+                            if (value.minValue && value.maxValue) {
+                                salaryStr = `${currency} ${value.minValue.toLocaleString()}-${value.maxValue.toLocaleString()} ${value.unitText}`
+                            } else if (value.minValue) {
+                                salaryStr = `${currency} ${value.minValue.toLocaleString()} ${value.unitText}`
+                            }
+                        }
+
                         const { error } = await supabase.from('jobs').upsert(
                             {
-                                external_id: `monster_${job.jobId || job.jobUrl}`,
+                                external_id: `monster_${jp.identifier?.value || jp.title.replace(/\s+/g, '_').toLowerCase()}`,
                                 source: 'monster',
-                                title: job.jobTitle,
-                                company: job.companyName,
-                                location: job.location,
-                                description: job.description?.substring(0, 5000),
-                                url: job.jobUrl,
-                                salary: job.salary,
+                                title: jp.title,
+                                company: jp.hiringOrganization?.name,
+                                location: locStr,
+                                description: jp.description?.substring(0, 5000),
+                                url: job.apply?.applyUrl,
+                                salary: salaryStr,
                                 search_title: title,
                             },
                             { onConflict: 'external_id' }

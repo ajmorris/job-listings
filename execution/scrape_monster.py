@@ -119,18 +119,50 @@ def save_to_supabase(jobs: list[dict]) -> int:
     saved_count = 0
     
     for job in jobs:
+        # Monster scraper fields are nested within jobPosting
+        jp = job.get('jobPosting', {})
+        apply_info = job.get('apply', {})
+        hiring_org = jp.get('hiringOrganization', {})
+        job_locations = jp.get('jobLocation', [])
+        
+        # Extract location string
+        loc_str = ""
+        if job_locations:
+            addr = job_locations[0].get('address', {})
+            city = addr.get('addressLocality', '')
+            region = addr.get('addressRegion', '')
+            if city and region:
+                loc_str = f"{city}, {region}"
+            else:
+                loc_str = city or region or ""
+
+        # Extract salary string
+        salary_info = jp.get('baseSalary', {})
+        salary_str = None
+        if salary_info:
+            val = salary_info.get('value', {})
+            min_val = val.get('minValue')
+            max_val = val.get('maxValue')
+            unit = val.get('unitText', '')
+            currency = salary_info.get('currency', '')
+            
+            if min_val and max_val:
+                salary_str = f"{currency} {min_val:,}-{max_val:,} {unit}"
+            elif min_val:
+                salary_str = f"{currency} {min_val:,} {unit}"
+
         # Transform to our database schema
-        job_id = job.get('jobId') or job.get('id') or job.get('jobUrl', '').split('/')[-1]
+        job_id = jp.get('identifier', {}).get('value') or job.get('jobId') or job.get('id')
         
         db_job = {
             "external_id": f"monster_{job_id}",
             "source": "monster",
-            "title": job.get('jobTitle', job.get('title', '')),
-            "company": job.get('companyName', job.get('company', '')),
-            "location": job.get('location', ''),
-            "description": (job.get('description', '') or '')[:5000],
-            "url": job.get('jobUrl', job.get('url', '')),
-            "salary": job.get('salary'),
+            "title": jp.get('title', job.get('jobTitle', '')),
+            "company": hiring_org.get('name', job.get('companyName', '')),
+            "location": loc_str or job.get('location', ''),
+            "description": (jp.get('description', '') or '')[:5000],
+            "url": apply_info.get('applyUrl') or job.get('jobUrl', ''),
+            "salary": salary_str or job.get('salary'),
             "search_title": job.get('search_title', ''),
         }
         
