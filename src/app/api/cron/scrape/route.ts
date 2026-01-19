@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin'
 // LinkedIn Jobs Scraper Actor ID on Apify (uses titleSearch for precise filtering)
 const LINKEDIN_ACTOR_ID = 'fantastic-jobs~advanced-linkedin-job-search-api'
 const INDEED_ACTOR_ID = 'misceres~indeed-scraper'
+const MONSTER_ACTOR_ID = 'memo23~monster-scraper'
 
 interface ApifyRunResponse {
     data: {
@@ -33,6 +34,16 @@ interface IndeedJob {
     salary?: string | null
     postedAt?: string
     id: string
+}
+
+interface MonsterJob {
+    jobTitle: string
+    companyName: string
+    location: string
+    jobUrl: string
+    description: string
+    salary?: string | null
+    jobId: string
 }
 
 async function runApifyActor(actorId: string, input: object): Promise<object[]> {
@@ -176,6 +187,7 @@ export async function POST(request: NextRequest) {
         const results = {
             linkedin: 0,
             indeed: 0,
+            monster: 0,
             skipped: 0,
             errors: [] as string[],
         }
@@ -270,11 +282,58 @@ export async function POST(request: NextRequest) {
             } else {
                 results.skipped++
             }
+
+            // Scrape Monster (if not recently scraped)
+            if (!recentlyScraped.has(`monster:${title}`)) {
+                const logId = await logScrapeStart(supabase, 'monster', title)
+                try {
+                    const encodedQuery = encodeURIComponent(title)
+                    const encodedLocation = encodeURIComponent('United States')
+                    const searchUrl = `https://www.monster.com/jobs/search?q=${encodedQuery}&where=${encodedLocation}&so=m.h.sh`
+
+                    const monsterJobs = await runApifyActor(MONSTER_ACTOR_ID, {
+                        startUrls: [searchUrl],
+                        maxItems: 25,
+                    }) as MonsterJob[]
+
+                    let savedCount = 0
+                    for (const job of monsterJobs) {
+                        const jobTitleLower = (job.jobTitle || '').toLowerCase()
+                        const searchTitleLower = title.toLowerCase()
+                        if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                            continue
+                        }
+
+                        const { error } = await supabase.from('jobs').upsert(
+                            {
+                                external_id: `monster_${job.jobId || job.jobUrl}`,
+                                source: 'monster',
+                                title: job.jobTitle,
+                                company: job.companyName,
+                                location: job.location,
+                                description: job.description?.substring(0, 5000),
+                                url: job.jobUrl,
+                                salary: job.salary,
+                                search_title: title,
+                            },
+                            { onConflict: 'external_id' }
+                        )
+                        if (!error) savedCount++
+                    }
+                    results.monster += savedCount
+                    await logScrapeComplete(supabase, logId, monsterJobs.length, savedCount, monsterJobs)
+                } catch (err) {
+                    results.errors.push(`Monster (${title}): ${err}`)
+                    await logScrapeError(supabase, logId, String(err))
+                }
+            } else {
+                results.skipped++
+            }
         }
 
         return NextResponse.json({
             success: true,
-            message: `Scraped ${results.linkedin} LinkedIn jobs and ${results.indeed} Indeed jobs (${results.skipped} sources skipped - recently scraped)`,
+            message: `Scraped ${results.linkedin} LinkedIn, ${results.indeed} Indeed, and ${results.monster} Monster jobs (${results.skipped} sources skipped - recently scraped)`,
             errors: results.errors,
         })
     } catch (error) {

@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-LinkedIn Job Scraper Execution Script
+Monster.com Job Scraper Execution Script
 
-This script uses the Apify LinkedIn Jobs Scraper actor to fetch job listings
+This script uses the Apify Monster.com Scraper actor to fetch job listings
 for specified job titles, then saves them to Supabase.
 
 Environment Variables Required:
 - APIFY_API_TOKEN: Your Apify API token
-- SUPABASE_URL: Supabase project URL
+- NEXT_PUBLIC_SUPABASE_URL: Supabase project URL
 - SUPABASE_SERVICE_ROLE_KEY: Supabase service role key (for admin access)
 
 Usage:
-  python scrape_linkedin.py "Software Engineer" "Product Manager"
+  python scrape_monster.py "Software Engineer" "Product Manager"
 """
 
 import os
@@ -28,31 +28,39 @@ try:
 except ImportError:
     pass
 
+import argparse
+
 APIFY_API_TOKEN = os.getenv('APIFY_API_TOKEN')
 SUPABASE_URL = os.getenv('NEXT_PUBLIC_SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
 
-LINKEDIN_ACTOR_ID = 'fantastic-jobs~advanced-linkedin-job-search-api'
+MONSTER_ACTOR_ID = 'memo23~monster-scraper'
 
+
+import urllib.parse
 
 def run_apify_actor(job_titles: list[str], limit_per_title: int = 25) -> list[dict]:
-    """Run the Apify LinkedIn actor and return the results."""
+    """Run the Apify Monster actor and return the results."""
     if not APIFY_API_TOKEN:
         raise ValueError("APIFY_API_TOKEN environment variable is not set")
     
     results = []
     
     for title in job_titles:
-        print(f"Scraping LinkedIn jobs for: {title}")
+        print(f"Scraping Monster jobs for: {title}")
+        
+        # Monster scraper requires startUrls with queries and location embedded
+        # Format: https://www.monster.com/jobs/search?q={query}&where={location}
+        encoded_query = urllib.parse.quote_plus(title)
+        encoded_location = urllib.parse.quote_plus("United States")
+        search_url = f"https://www.monster.com/jobs/search?q={encoded_query}&where={encoded_location}&so=m.h.sh"
         
         # Start the actor run
-        run_url = f"https://api.apify.com/v2/acts/{LINKEDIN_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
+        run_url = f"https://api.apify.com/v2/acts/{MONSTER_ACTOR_ID}/runs?token={APIFY_API_TOKEN}"
         
         payload = {
-            "titleSearch": [title],
-            "locationSearch": ["United States"],
-            "maxJobs": limit_per_title,
-            "descriptionType": "text",
+            "startUrls": [search_url],
+            "maxItems": limit_per_title,
         }
         
         response = requests.post(run_url, json=payload)
@@ -112,17 +120,17 @@ def save_to_supabase(jobs: list[dict]) -> int:
     
     for job in jobs:
         # Transform to our database schema
-        job_id = job.get('id') or job.get('url', '').split('/')[-1]
+        job_id = job.get('jobId') or job.get('id') or job.get('jobUrl', '').split('/')[-1]
         
         db_job = {
-            "external_id": f"linkedin_{job_id}",
-            "source": "linkedin",
-            "title": job.get('title', ''),
-            "company": job.get('organizationName', job.get('organization', '')),
+            "external_id": f"monster_{job_id}",
+            "source": "monster",
+            "title": job.get('jobTitle', job.get('title', '')),
+            "company": job.get('companyName', job.get('company', '')),
             "location": job.get('location', ''),
             "description": (job.get('description', '') or '')[:5000],
-            "url": job.get('url', ''),
-            "salary": job.get('salaryRange'),
+            "url": job.get('jobUrl', job.get('url', '')),
+            "salary": job.get('salary'),
             "search_title": job.get('search_title', ''),
         }
         
@@ -144,16 +152,14 @@ def save_to_supabase(jobs: list[dict]) -> int:
     return saved_count
 
 
-import argparse
-
 def main():
-    parser = argparse.ArgumentParser(description='LinkedIn Job Scraper')
+    parser = argparse.ArgumentParser(description='Monster.com Job Scraper')
     parser.add_argument('job_titles', nargs='*', help='Job titles to search for')
     parser.add_argument('--limit', type=int, default=25, help='Limit per job title (default: 25)')
     args = parser.parse_args()
 
     print("=" * 50)
-    print("LinkedIn Job Scraper")
+    print("Monster.com Job Scraper")
     print(f"Started at: {datetime.now().isoformat()}")
     print("=" * 50)
     

@@ -32,7 +32,7 @@ APIFY_API_TOKEN = os.getenv('APIFY_API_TOKEN')
 SUPABASE_URL = os.getenv('NEXT_PUBLIC_SUPABASE_URL')
 SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
 
-INDEED_ACTOR_ID = 'misceres/indeed-scraper'
+INDEED_ACTOR_ID = 'misceres~indeed-scraper'
 
 
 def run_apify_actor(job_titles: list[str], limit_per_title: int = 25) -> list[dict]:
@@ -147,16 +147,22 @@ def save_to_supabase(jobs: list[dict]) -> int:
     return saved_count
 
 
+import argparse
+
 def main():
+    parser = argparse.ArgumentParser(description='Indeed Job Scraper')
+    parser.add_argument('job_titles', nargs='*', help='Job titles to search for')
+    parser.add_argument('--limit', type=int, default=25, help='Limit per job title (default: 25)')
+    args = parser.parse_args()
+
     print("=" * 50)
     print("Indeed Job Scraper")
     print(f"Started at: {datetime.now().isoformat()}")
     print("=" * 50)
     
-    # Get job titles from command line or fetch from database
-    if len(sys.argv) > 1:
-        job_titles = sys.argv[1:]
-    else:
+    job_titles = args.job_titles
+    
+    if not job_titles:
         # Fetch unique job titles from database
         if not SUPABASE_URL or not SUPABASE_KEY:
             print("Error: No job titles provided and cannot fetch from database")
@@ -181,11 +187,12 @@ def main():
         return
     
     print(f"Searching for {len(job_titles)} job titles: {job_titles}")
+    print(f"Limit per title: {args.limit}")
     print("-" * 50)
     
     # Scrape jobs
     try:
-        jobs = run_apify_actor(job_titles)
+        jobs = run_apify_actor(job_titles, limit_per_title=args.limit)
         print(f"\nTotal jobs scraped: {len(jobs)}")
     except Exception as e:
         print(f"Error scraping jobs: {e}")

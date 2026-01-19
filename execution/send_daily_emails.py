@@ -54,8 +54,8 @@ def generate_jobs_email_html(user_email: str, jobs: list[dict], unsubscribe_toke
             </div>
             {f"<div style='color: #22c55e;'>💰 {job['salary']}</div>" if job.get('salary') else ''}
             <div style="margin-top: 8px;">
-              <span style="background: {'#0077b5' if job['source'] == 'linkedin' else '#2164f3'}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px;">
-                {'LinkedIn' if job['source'] == 'linkedin' else 'Indeed'}
+              <span style="background: {'#0077b5' if job['source'] == 'linkedin' else '#2557a7' if job['source'] == 'indeed' else '#6d28d9'}; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: 600;">
+                {job['source'].title()}
               </span>
             </div>
           </td>
@@ -125,7 +125,7 @@ def generate_no_jobs_email_html(user_email: str, unsubscribe_token: str) -> str:
             <div style="font-size: 48px; margin-bottom: 16px;">📭</div>
             <h2 style="color: #f8f8f2; margin: 0 0 16px 0;">No New Jobs Today</h2>
             <p style="color: #a0a0a0; font-size: 16px; margin: 0;">
-              We searched LinkedIn and Indeed but didn't find any new jobs matching your preferences today.
+              We searched LinkedIn, Indeed, and Monster but didn't find any new jobs matching your preferences today.
               We'll keep looking and let you know as soon as we find something!
             </p>
           </td>
@@ -157,12 +157,15 @@ def send_email(to: str, subject: str, html: str) -> bool:
             "Content-Type": "application/json",
         },
         json={
-            "from": "JobFlow <noreply@jobflow.app>",
+            "from": "JobFlow <no-reply@jobs.ajmorris.me>",
             "to": to,
             "subject": subject,
             "html": html,
         }
     )
+    
+    if response.status_code != 200:
+        print(f"  Error sending to {to}: {response.status_code} - {response.text}")
     
     return response.status_code == 200
 
