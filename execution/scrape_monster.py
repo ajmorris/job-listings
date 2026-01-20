@@ -184,6 +184,90 @@ def save_to_supabase(jobs: list[dict]) -> int:
     return saved_count
 
 
+def log_scrape_start(title: str) -> str:
+    """Log the start of a scrape run in Supabase."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return None
+    
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    
+    resp = requests.post(
+        f"{SUPABASE_URL}/rest/v1/scrape_logs",
+        headers=headers,
+        json={
+            "source": "monster",
+            "search_title": title,
+            "started_at": datetime.now().isoformat()
+        }
+    )
+    if resp.status_code in [200, 201]:
+        # Return the created log ID
+        # Note: We need to fetch it since Postgres doesn't return it by default unless using 'Prefer: return=representation'
+        # But we can just use the latest one or use return=representation
+        return True # Simplified for now, or use Prefer header
+    return None
+
+def log_scrape_complete(title: str, found: int, saved: int):
+    """Log the completion of a scrape run."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    
+    # Update the most recent log for this source and title
+    # First find it
+    resp = requests.get(
+        f"{SUPABASE_URL}/rest/v1/scrape_logs?source=eq.monster&search_title=eq.{title}&order=started_at.desc&limit=1",
+        headers=headers
+    )
+    logs = resp.json()
+    if logs:
+        log_id = logs[0]['id']
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/scrape_logs?id=eq.{log_id}",
+            headers=headers,
+            json={
+                "jobs_found": found,
+                "jobs_saved": saved,
+                "completed_at": datetime.now().isoformat()
+            }
+        )
+
+def log_scrape_error(title: str, error_msg: str):
+    """Log an error during a scrape run."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    
+    headers = {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+    }
+    
+    resp = requests.get(
+        f"{SUPABASE_URL}/rest/v1/scrape_logs?source=eq.monster&search_title=eq.{title}&order=started_at.desc&limit=1",
+        headers=headers
+    )
+    logs = resp.json()
+    if logs:
+        log_id = logs[0]['id']
+        requests.patch(
+            f"{SUPABASE_URL}/rest/v1/scrape_logs?id=eq.{log_id}",
+            headers=headers,
+            json={
+                "error": error_msg,
+                "completed_at": datetime.now().isoformat()
+            }
+        )
+
 def main():
     parser = argparse.ArgumentParser(description='Monster.com Job Scraper')
     parser.add_argument('job_titles', nargs='*', help='Job titles to search for')
@@ -225,24 +309,29 @@ def main():
     print(f"Limit per title: {args.limit}")
     print("-" * 50)
     
-    # Scrape jobs
-    try:
-        jobs = run_apify_actor(job_titles, limit_per_title=args.limit)
-        print(f"\nTotal jobs scraped: {len(jobs)}")
-    except Exception as e:
-        print(f"Error scraping jobs: {e}")
-        sys.exit(1)
+    total_saved = 0
     
-    # Save to database
-    if jobs:
+    for title in job_titles:
+        log_scrape_start(title)
         try:
-            saved_count = save_to_supabase(jobs)
-            print(f"Jobs saved to database: {saved_count}")
+            print(f"Scraping Monster jobs for: {title}")
+            jobs = run_apify_actor(title, limit_per_title=args.limit)
+            print(f"  Found {len(jobs)} jobs")
+            
+            if jobs:
+                saved_count = save_to_supabase(jobs)
+                print(f"  Jobs saved to database: {saved_count}")
+                log_scrape_complete(title, len(jobs), saved_count)
+                total_saved += saved_count
+            else:
+                log_scrape_complete(title, 0, 0)
+                
         except Exception as e:
-            print(f"Error saving to database: {e}")
-            sys.exit(1)
+            print(f"Error scraping jobs for {title}: {e}")
+            log_scrape_error(title, str(e))
     
     print("-" * 50)
+    print(f"Total jobs saved: {total_saved}")
     print(f"Completed at: {datetime.now().isoformat()}")
 
 

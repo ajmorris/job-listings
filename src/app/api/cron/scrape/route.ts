@@ -214,166 +214,169 @@ export async function POST(request: NextRequest) {
 
         // Scrape each title
         for (const title of uniqueTitles) {
-            // Scrape LinkedIn (if not recently scraped)
-            if (!recentlyScraped.has(`linkedin:${title}`)) {
-                const logId = await logScrapeStart(supabase, 'linkedin', title)
-                try {
-                    const linkedInJobs = await runApifyActor(LINKEDIN_ACTOR_ID, {
-                        titleSearch: [title],
-                        locationSearch: ['United States'],
-                        maxJobs: 25,
-                        descriptionType: 'text',
-                    }) as LinkedInJob[]
+            console.log(`Processing title: ${title}`)
 
-                    let savedCount = 0
-                    for (const job of linkedInJobs) {
-                        const jobTitleLower = (job.title || '').toLowerCase()
-                        const searchTitleLower = title.toLowerCase()
-                        if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
-                            continue
-                        }
+            const scrapers = [
+                // LinkedIn Scraper
+                (async () => {
+                    if (recentlyScraped.has(`linkedin:${title}`)) return
+                    const logId = await logScrapeStart(supabase, 'linkedin', title)
+                    try {
+                        const linkedInJobs = await runApifyActor(LINKEDIN_ACTOR_ID, {
+                            titleSearch: [title],
+                            locationSearch: ['United States'],
+                            maxJobs: 25,
+                            descriptionType: 'text',
+                        }) as LinkedInJob[]
 
-                        const { error } = await supabase.from('jobs').upsert(
-                            {
-                                external_id: `linkedin_${job.id || job.url}`,
-                                source: 'linkedin',
-                                title: job.title,
-                                company: job.organizationName || job.organization,
-                                location: job.location,
-                                description: job.description?.substring(0, 5000),
-                                url: job.url,
-                                salary: job.salaryRange,
-                                search_title: title,
-                            },
-                            { onConflict: 'external_id' }
-                        )
-                        if (!error) savedCount++
-                    }
-                    results.linkedin += savedCount
-                    await logScrapeComplete(supabase, logId, linkedInJobs.length, savedCount, linkedInJobs)
-                } catch (err) {
-                    results.errors.push(`LinkedIn (${title}): ${err}`)
-                    await logScrapeError(supabase, logId, String(err))
-                }
-            } else {
-                results.skipped++
-            }
-
-            // Scrape Indeed (if not recently scraped)
-            if (!recentlyScraped.has(`indeed:${title}`)) {
-                const logId = await logScrapeStart(supabase, 'indeed', title)
-                try {
-                    const indeedJobs = await runApifyActor(INDEED_ACTOR_ID, {
-                        position: title,
-                        country: 'US',
-                        maxItems: 25,
-                    }) as IndeedJob[]
-
-                    let savedCount = 0
-                    for (const job of indeedJobs) {
-                        const jobTitleLower = (job.positionName || '').toLowerCase()
-                        const searchTitleLower = title.toLowerCase()
-                        if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
-                            continue
-                        }
-
-                        const { error } = await supabase.from('jobs').upsert(
-                            {
-                                external_id: `indeed_${job.id}`,
-                                source: 'indeed',
-                                title: job.positionName,
-                                company: job.company,
-                                location: job.location,
-                                description: job.description?.substring(0, 5000),
-                                url: job.url,
-                                salary: job.salary,
-                                search_title: title,
-                            },
-                            { onConflict: 'external_id' }
-                        )
-                        if (!error) savedCount++
-                    }
-                    results.indeed += savedCount
-                    await logScrapeComplete(supabase, logId, indeedJobs.length, savedCount, indeedJobs)
-                } catch (err) {
-                    results.errors.push(`Indeed (${title}): ${err}`)
-                    await logScrapeError(supabase, logId, String(err))
-                }
-            } else {
-                results.skipped++
-            }
-
-            // Scrape Monster (if not recently scraped)
-            if (!recentlyScraped.has(`monster:${title}`)) {
-                const logId = await logScrapeStart(supabase, 'monster', title)
-                try {
-                    const encodedQuery = encodeURIComponent(title)
-                    const encodedLocation = encodeURIComponent('United States')
-                    const searchUrl = `https://www.monster.com/jobs/search?q=${encodedQuery}&where=${encodedLocation}&so=m.h.sh`
-
-                    const monsterJobs = await runApifyActor(MONSTER_ACTOR_ID, {
-                        startUrls: [searchUrl],
-                        maxItems: 25,
-                    }) as MonsterJob[]
-
-                    let savedCount = 0
-                    for (const job of monsterJobs) {
-                        const jp = job.jobPosting
-                        if (!jp) continue
-
-                        const jobTitleLower = (jp.title || '').toLowerCase()
-                        const searchTitleLower = title.toLowerCase()
-                        if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
-                            continue
-                        }
-
-                        // Extract location
-                        let locStr = ""
-                        if (jp.jobLocation && jp.jobLocation.length > 0) {
-                            const addr = jp.jobLocation[0].address
-                            if (addr.addressLocality && addr.addressRegion) {
-                                locStr = `${addr.addressLocality}, ${addr.addressRegion}`
-                            } else {
-                                locStr = addr.addressLocality || addr.addressRegion || ""
+                        let savedCount = 0
+                        for (const job of linkedInJobs) {
+                            const jobTitleLower = (job.title || '').toLowerCase()
+                            const searchTitleLower = title.toLowerCase()
+                            if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                                continue
                             }
-                        }
 
-                        // Extract salary
-                        let salaryStr = null
-                        if (jp.baseSalary) {
-                            const { currency, value } = jp.baseSalary
-                            if (value.minValue && value.maxValue) {
-                                salaryStr = `${currency} ${value.minValue.toLocaleString()}-${value.maxValue.toLocaleString()} ${value.unitText}`
-                            } else if (value.minValue) {
-                                salaryStr = `${currency} ${value.minValue.toLocaleString()} ${value.unitText}`
-                            }
+                            const { error } = await supabase.from('jobs').upsert(
+                                {
+                                    external_id: `linkedin_${job.id || job.url}`,
+                                    source: 'linkedin',
+                                    title: job.title,
+                                    company: job.organizationName || job.organization,
+                                    location: job.location,
+                                    description: job.description?.substring(0, 5000),
+                                    url: job.url,
+                                    salary: job.salaryRange,
+                                    search_title: title,
+                                },
+                                { onConflict: 'external_id' }
+                            )
+                            if (!error) savedCount++
                         }
-
-                        const { error } = await supabase.from('jobs').upsert(
-                            {
-                                external_id: `monster_${jp.identifier?.value || jp.title.replace(/\s+/g, '_').toLowerCase()}`,
-                                source: 'monster',
-                                title: jp.title,
-                                company: jp.hiringOrganization?.name,
-                                location: locStr,
-                                description: jp.description?.substring(0, 5000),
-                                url: job.apply?.applyUrl,
-                                salary: salaryStr,
-                                search_title: title,
-                            },
-                            { onConflict: 'external_id' }
-                        )
-                        if (!error) savedCount++
+                        results.linkedin += savedCount
+                        await logScrapeComplete(supabase, logId, linkedInJobs.length, savedCount, linkedInJobs)
+                    } catch (err) {
+                        results.errors.push(`LinkedIn (${title}): ${err}`)
+                        await logScrapeError(supabase, logId, String(err))
                     }
-                    results.monster += savedCount
-                    await logScrapeComplete(supabase, logId, monsterJobs.length, savedCount, monsterJobs)
-                } catch (err) {
-                    results.errors.push(`Monster (${title}): ${err}`)
-                    await logScrapeError(supabase, logId, String(err))
-                }
-            } else {
-                results.skipped++
-            }
+                })(),
+
+                // Indeed Scraper
+                (async () => {
+                    if (recentlyScraped.has(`indeed:${title}`)) return
+                    const logId = await logScrapeStart(supabase, 'indeed', title)
+                    try {
+                        const indeedJobs = await runApifyActor(INDEED_ACTOR_ID, {
+                            position: title,
+                            country: 'US',
+                            maxItems: 25,
+                        }) as IndeedJob[]
+
+                        let savedCount = 0
+                        for (const job of indeedJobs) {
+                            const jobTitleLower = (job.positionName || '').toLowerCase()
+                            const searchTitleLower = title.toLowerCase()
+                            if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                                continue
+                            }
+
+                            const { error } = await supabase.from('jobs').upsert(
+                                {
+                                    external_id: `indeed_${job.id}`,
+                                    source: 'indeed',
+                                    title: job.positionName,
+                                    company: job.company,
+                                    location: job.location,
+                                    description: job.description?.substring(0, 5000),
+                                    url: job.url,
+                                    salary: job.salary,
+                                    search_title: title,
+                                },
+                                { onConflict: 'external_id' }
+                            )
+                            if (!error) savedCount++
+                        }
+                        results.indeed += savedCount
+                        await logScrapeComplete(supabase, logId, indeedJobs.length, savedCount, indeedJobs)
+                    } catch (err) {
+                        results.errors.push(`Indeed (${title}): ${err}`)
+                        await logScrapeError(supabase, logId, String(err))
+                    }
+                })(),
+
+                // Monster Scraper
+                (async () => {
+                    if (recentlyScraped.has(`monster:${title}`)) return
+                    const logId = await logScrapeStart(supabase, 'monster', title)
+                    try {
+                        const encodedQuery = encodeURIComponent(title)
+                        const encodedLocation = encodeURIComponent('United States')
+                        const searchUrl = `https://www.monster.com/jobs/search?q=${encodedQuery}&where=${encodedLocation}&so=m.h.sh`
+
+                        const monsterJobs = await runApifyActor(MONSTER_ACTOR_ID, {
+                            startUrls: [searchUrl],
+                            maxItems: 25,
+                        }) as MonsterJob[]
+
+                        let savedCount = 0
+                        for (const job of monsterJobs) {
+                            const jp = job.jobPosting
+                            if (!jp) continue
+
+                            const jobTitleLower = (jp.title || '').toLowerCase()
+                            const searchTitleLower = title.toLowerCase()
+                            if (!jobTitleLower.includes(searchTitleLower) && !searchTitleLower.split(' ').some((word: string) => jobTitleLower.includes(word))) {
+                                continue
+                            }
+
+                            // Extract location
+                            let locStr = ""
+                            if (jp.jobLocation && jp.jobLocation.length > 0) {
+                                const addr = jp.jobLocation[0].address
+                                if (addr.addressLocality && addr.addressRegion) {
+                                    locStr = `${addr.addressLocality}, ${addr.addressRegion}`
+                                } else {
+                                    locStr = addr.addressLocality || addr.addressRegion || ""
+                                }
+                            }
+
+                            // Extract salary
+                            let salaryStr = null
+                            if (jp.baseSalary) {
+                                const { currency, value } = jp.baseSalary
+                                if (value.minValue && value.maxValue) {
+                                    salaryStr = `${currency} ${value.minValue.toLocaleString()}-${value.maxValue.toLocaleString()} ${value.unitText}`
+                                } else if (value.minValue) {
+                                    salaryStr = `${currency} ${value.minValue.toLocaleString()} ${value.unitText}`
+                                }
+                            }
+
+                            const { error } = await supabase.from('jobs').upsert(
+                                {
+                                    external_id: `monster_${jp.identifier?.value || jp.title.replace(/\s+/g, '_').toLowerCase()}`,
+                                    source: 'monster',
+                                    title: jp.title,
+                                    company: jp.hiringOrganization?.name,
+                                    location: locStr,
+                                    description: jp.description?.substring(0, 5000),
+                                    url: job.apply?.applyUrl,
+                                    salary: salaryStr,
+                                    search_title: title,
+                                },
+                                { onConflict: 'external_id' }
+                            )
+                            if (!error) savedCount++
+                        }
+                        results.monster += savedCount
+                        await logScrapeComplete(supabase, logId, monsterJobs.length, savedCount, monsterJobs)
+                    } catch (err) {
+                        results.errors.push(`Monster (${title}): ${err}`)
+                        await logScrapeError(supabase, logId, String(err))
+                    }
+                })()
+            ]
+
+            await Promise.all(scrapers)
         }
 
         return NextResponse.json({
